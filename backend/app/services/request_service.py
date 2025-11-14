@@ -39,12 +39,38 @@ def get_user_requests(db: Session, user_id: uuid.UUID) -> List[Request]:
 
 def get_requests_for_approval(db: Session, approver_user_id: uuid.UUID) -> List[Request]:
     """Получить заявки на согласование для пользователя"""
-    return db.query(Request).filter(
+    # Ищем заявки, где пользователь является текущим согласующим
+    # ИЛИ где есть шаг согласования с PENDING для этого пользователя
+    requests_by_current_approver = db.query(Request).filter(
         and_(
             Request.current_approver_id == approver_user_id,
             Request.status == RequestStatus.PENDING
         )
-    ).order_by(Request.created_at.desc()).all()
+    ).all()
+    
+    # Также ищем через шаги согласования (на случай, если current_approver_id не установлен)
+    pending_steps = db.query(RequestApprovalStep).filter(
+        and_(
+            RequestApprovalStep.approver_user_id == approver_user_id,
+            RequestApprovalStep.action == ApprovalAction.PENDING
+        )
+    ).all()
+    
+    request_ids_from_steps = {step.request_id for step in pending_steps}
+    requests_by_steps = db.query(Request).filter(
+        and_(
+            Request.id.in_(request_ids_from_steps),
+            Request.status == RequestStatus.PENDING
+        )
+    ).all() if request_ids_from_steps else []
+    
+    # Объединяем результаты и убираем дубликаты
+    all_requests = {req.id: req for req in requests_by_current_approver}
+    for req in requests_by_steps:
+        all_requests[req.id] = req
+    
+    # Сортируем по дате создания (новые сначала)
+    return sorted(all_requests.values(), key=lambda r: r.created_at, reverse=True)
 
 
 def _get_deanery_staff_for_faculty(db: Session, faculty_id: uuid.UUID) -> Optional[uuid.UUID]:
