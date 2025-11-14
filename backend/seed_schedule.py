@@ -12,16 +12,14 @@ sys.path.insert(0, str(Path(__file__).parent))
 from sqlalchemy.orm import Session, configure_mappers
 from app.db.session import SessionLocal
 from app.db.base import Base
-from app.models import (
-    Timeslot,
-    Subject,
-    Room,
-    Lesson,
-    LessonGroup,
-    StudentGroup,
-    Teacher,
-    User,
-)
+from app.models.timeslot import Timeslot
+from app.models.subject import Subject
+from app.models.room import Room
+from app.models.lesson import Lesson
+from app.models.lesson_group import LessonGroup
+from app.models.student_group import StudentGroup
+from app.models.teacher import Teacher
+from app.models.user import User
 
 # Настраиваем все relationships перед использованием
 try:

@@ -1,6 +1,7 @@
 """
 Модуль 4: Система заявок и документов
 """
+import logging
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -8,6 +9,7 @@ import uuid
 
 from app.db.session import get_db
 from app.models.user import User
+from app.models.request import Request, RequestType, RequestStatus
 from app.schemas.request import (
     RequestCreate, RequestRead, RequestDetailRead,
     RequestApprove, RequestReject, RequestListRead,
@@ -25,10 +27,17 @@ from app.services.request_service import (
     get_request_documents,
     get_request_detail,
 )
+from app.services import bot_notify_service
 from app.api.deps import get_current_active_user
 from app.core.config import settings
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+READY_DOCUMENT_REQUEST_TYPES = {
+    RequestType.STUDENT_CERTIFICATE,
+    RequestType.DOCUMENT_APPROVAL,
+}
 
 
 @router.get(
@@ -122,6 +131,7 @@ def create_new_request(
             request_data=request_data,
             author_user_id=current_user.id
         )
+        _notify_document_ready_if_needed(request, current_user.max_id)
         return RequestRead.model_validate(request)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Ошибка при создании заявки: {str(e)}")
@@ -147,6 +157,8 @@ def approve_request_endpoint(
             approver_user_id=current_user.id,
             approve_data=approve_data
         )
+        author_max_id = _get_user_max_id(db, request.author_user_id)
+        _notify_document_ready_if_needed(request, author_max_id)
         return RequestRead.model_validate(request)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -246,4 +258,30 @@ def get_request_documents_endpoint(
             file_url=f"{settings.static_url.rstrip('/')}/{doc.file_path}"
         ) for doc in documents
     ]
+
+
+def _notify_document_ready_if_needed(request: Request, user_max_id: Optional[int]) -> None:
+    if request.request_type not in READY_DOCUMENT_REQUEST_TYPES:
+        return
+    if request.status != RequestStatus.APPROVED:
+        return
+    if not user_max_id or int(user_max_id) <= 0:
+        return
+    try:
+        bot_notify_service.notify_document_ready(int(user_max_id))
+    except bot_notify_service.BotNotifyError as exc:
+        logger.warning(
+            "failed to notify bot about ready document %s: %s",
+            request.id,
+            exc,
+        )
+
+
+def _get_user_max_id(db: Session, user_id: uuid.UUID) -> Optional[int]:
+    if not user_id:
+        return None
+    user = db.get(User, user_id)
+    if user and user.max_id:
+        return user.max_id
+    return None
 

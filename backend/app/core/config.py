@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     yookassa_shop_id: str = Field(default="")
     yookassa_secret_key: str = Field(default="")
     yookassa_test_mode: bool = Field(default=True)
+    bot_notify_base_url: str = Field(default="http://bot:8080")
+    bot_notify_token: str = Field(default="")
+    bot_default_sender_max_id: int = Field(default=1)
 
     model_config = {
         "env_file": ".env",

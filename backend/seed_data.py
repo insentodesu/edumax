@@ -13,12 +13,10 @@ from app.db.session import SessionLocal
 # Импортируем все модели через base, чтобы relationships были правильно настроены
 from app.db.base import Base
 # Импортируем все модели, чтобы relationships были правильно настроены
-from app.models import (
-    University,
-    Faculty,
-    Kafedra,
-    StudentGroup,
-)
+from app.models.university import University
+from app.models.faculty import Faculty
+from app.models.kafedra import Kafedra
+from app.models.student_group import StudentGroup
 
 # Настраиваем все relationships перед использованием
 try:

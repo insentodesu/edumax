@@ -5,9 +5,11 @@ import uuid
 
 from app.db.session import get_db
 from app.models.user import User, UserRole
+from app.models.payment import PaymentType
 from app.schemas.payment import (
     PaymentCreate, PaymentRead, PaymentDetailRead,
-    PaymentInitiate, PaymentWebhook, PaymentHistoryRead
+    PaymentInitiate, PaymentWebhook, PaymentHistoryRead,
+    PaymentLinkRequest, PaymentLinkResponse,
 )
 from app.services.payment_service import (
     get_payment_by_id,
@@ -19,8 +21,9 @@ from app.services.payment_service import (
     get_payment_history,
     get_user_balance_info,
 )
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, get_current_admin
 from app.core.config import settings
+from app.services import bot_notify_service
 
 router = APIRouter()
 
@@ -41,6 +44,33 @@ def get_balance(
         "total_amount_rub": balance_info["total_amount"] / 100,
     }
 
+
+
+
+@router.get("/status", summary="Статус задолженностей по оплате")
+def get_payment_status(
+    user_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Вернуть необходимость оплат по MAX-ID"""
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="user_id is required",
+        )
+
+    user = db.query(User).filter(User.max_id == user_id).first()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Пользователь не найден",
+        )
+
+    balance_info = get_user_balance_info(db, user.id)
+    return {
+        "need_dorm": balance_info.get("dormitory_amount", 0) > 0,
+        "need_tuition": balance_info.get("tuition_amount", 0) > 0,
+    }
 
 @router.get("", response_model=List[PaymentRead], summary="История платежей")
 def get_my_payments(
@@ -89,6 +119,74 @@ def create_payment_endpoint(
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
+
+
+
+@router.post(
+    "/link",
+    response_model=PaymentLinkResponse,
+    summary="Создать ссылку на оплату для MAX-ID",
+)
+def generate_payment_link(
+    payload: PaymentLinkRequest,
+    db: Session = Depends(get_db),
+) -> PaymentLinkResponse:
+    """Генерирует ссылку на оплату для пользователя по MAX-ID (используется ботом)."""
+    user = db.query(User).filter(User.max_id == payload.user_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Пользователь с таким MAX-ID не найден")
+
+    kind_map = {
+        "dorm": (
+            PaymentType.DORMITORY,
+            "Оплата проживания в общежитии",
+            "Период проживания",
+        ),
+        "tuition": (
+            PaymentType.TUITION,
+            "Оплата обучения",
+            "Период обучения",
+        ),
+    }
+    kind_meta = kind_map.get(payload.kind)
+    if not kind_meta:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Некорректный тип платежа")
+
+    payment_type, description, period_title = kind_meta
+    balance_info = get_user_balance_info(db, user.id)
+    amount_lookup = {
+        "dorm": balance_info.get("dormitory_amount", 0),
+        "tuition": balance_info.get("tuition_amount", 0),
+    }
+    amount = amount_lookup.get(payload.kind, 0)
+    if amount <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Нет начислений по этому платежу")
+
+    payment_create = PaymentCreate(
+        payment_type=payment_type,
+        amount=amount,
+        period=period_title,
+        description=description,
+    )
+
+    try:
+        payment = create_payment(db, payment_data=payment_create, user_id=user.id)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    return_url = f"{settings.api_v1_prefix}/payments/{payment.id}/success"
+    try:
+        payment = initiate_yookassa_payment(db, payment_id=payment.id, return_url=return_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+
+    if not payment.yookassa_confirmation_url:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Не удалось получить ссылку на оплату")
+
+    return PaymentLinkResponse(
+        url=payment.yookassa_confirmation_url,
+        payment_id=payment.id,
+    )
 
 @router.post("/initiate", response_model=PaymentRead, summary="Инициировать платеж через ЮКассу")
 def initiate_payment(
@@ -180,3 +278,21 @@ def payment_success(
         "payment_status": payment.status.value,
     }
 
+
+@router.post("/tuition/remind/{max_id}", summary="Отправить напоминание об оплате", status_code=status.HTTP_200_OK)
+def remind_tuition_payment(
+    max_id: int,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Администратор вручную напоминает студенту об оплате и инициирует пуш в чат‑боте"""
+    user = db.query(User).filter(User.max_id == max_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Пользователь с max_id={max_id} не найден")
+
+    try:
+        bot_notify_service.notify_tuition_reminder(max_id)
+    except bot_notify_service.BotNotifyError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+
+    return {"status": "sent", "user_id": str(user.id), "max_id": max_id}
