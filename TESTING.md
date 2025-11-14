@@ -1,16 +1,16 @@
-# Тестирование backend и чат-бота (Docker)
+# Manual Testing Guide (Docker)
 
-> Mini app (frontend) сейчас не трогаем. Все проверки выполняем только в Docker.
+This document describes how to test the backend, chat bot, and (optionally) frontend using Docker. Mini app UI is still outside the main testing scope, but containers will be built so that the full stack is available.
 
-## 1. Предпосылки
+## 1. Prerequisites
 
-- Docker Engine 20.10+ и Docker Compose v2 (`docker compose`).
-- Клонированный репозиторий `edumax`.
-- Токен Max-бота (`BOT_TOKEN`), который будет обрабатывать сообщения в чате.
+- Docker Engine 20.10+ and Docker Compose v2 (`docker compose` command).
+- Repository cloned to your workstation.
+- Valid Max bot token (`BOT_TOKEN`) so the chat bot can connect to Max Messenger.
 
-## 2. Переменные окружения (файл `.env` рядом с `docker-compose.yml`)
+## 2. Environment Variables (`.env` next to `docker-compose.yml`)
 
-Docker Compose автоматически считывает `.env`, лежащий рядом с `docker-compose.yml`, и подставляет значения в секцию `environment`. Создайте в корне (`edumax/.env`) файл со всеми нужными переменными:
+Docker Compose automatically loads variables from `.env` that lives beside `docker-compose.yml`. Create/update `edumax/.env` with at least:
 
 ```env
 # Backend
@@ -21,175 +21,151 @@ STATIC_ROOT=/data/static
 STATIC_DIR=/data/static
 STATIC_URL=/static
 BOT_NOTIFY_BASE_URL=http://bot:8080
-BOT_NOTIFY_TOKEN=my-bot-secret          # используется и backend-ом, и ботом
+BOT_NOTIFY_TOKEN=my-bot-secret          # shared with the bot HTTP API
 BOT_DEFAULT_SENDER_MAX_ID=1
 
-# YooKassa (можно оставить пустыми, если не тестируем платежку)
+# YooKassa (keep empty if you do not test payments)
 YOOKASSA_SHOP_ID=
 YOOKASSA_SECRET_KEY=
 YOOKASSA_TEST_MODE=true
 
 # Bot service
-BOT_TOKEN=<токен из Max>
-HTTP_BACKEND_TOKEN=my-bot-secret        # должен совпадать с BOT_NOTIFY_TOKEN
+BOT_TOKEN=<paste Max token>
+HTTP_BACKEND_TOKEN=my-bot-secret        # must match BOT_NOTIFY_TOKEN
 LOG_LEVEL=debug
 BACKEND_API_BASE_URL=http://backend:8000/api/v1
 
-# Фронт не используем, но переменная для build аргумента все равно может пригодиться
+# Frontend build arg (not mandatory for tests but used during build)
 VITE_API_TOKEN=
+VITE_API_BASE_URL=http://localhost:8000/api/v1
 ```
 
-> Теперь нет необходимости создавать отдельный `backend/.env`: все значения попадают в контейнер напрямую через `docker-compose.yml`.
+With this setup you no longer need a separate `backend/.env`; containers read everything from the root `.env`.
 
+## 3. Launch via Helper Script
 
-## Тестовые данные для регистрации в боте
-
-После запуска `./scripts/test-backend-bot.sh` база уже содержит тестовые данные из `backend/seed_*.py`. Ниже перечислены готовые профили — можно взять любого пользователя и пройти регистрацию полностью. Университет и подразделения у всех примеров одинаковые:  
-**Московский государственный университет имени М.В. Ломоносова → факультет «Факультет информатики и вычислительной техники» → кафедра «Кафедра информатики» → группа «ИВТ-21-01» (или «ИВТ-21-02» для второго студента).**
-
-### Студенты (роль `student`)
-1. **Иванов Иван Иванович**  
-   - Университет/факультет/кафедра/группа: см. описание выше.  
-   - Город: Москва.  
-   - Студенческий билет: `STU001`.
-2. **Петров Пётр Петрович**  
-   - Те же университет и факультет, группа `ИВТ-21-02`.  
-   - Город: Москва.  
-   - Студенческий билет: `STU002`.
-3. **Сидоров Сидор Сидорович**  
-   - Группа `ИВТ-21-01`.  
-   - Город: Москва.  
-   - Студенческий билет: `STU003`.
-
-### Преподаватели (роль `staff`, ветка преподавателя)
-1. **Профессоров Александр Иванович**  
-   - Университет и факультет из описания выше, кафедра «Кафедра информатики».  
-   - Город: Москва.  
-   - Табельный номер: `TCH001`.
-2. **Доцентов Сергей Петрович** — та же кафедра, табельный `TCH002`, город Москва.  
-3. **Ассистентов Владимир Николаевич** — табельный `TCH003`, город Москва.
-
-### Сотрудники деканата (роль `staff`, ветка административного персонала)
-1. **Деканов Иван Петрович**  
-   - Университет/факультет/кафедра: как в описании.  
-   - Город: Москва.  
-   - Табельный номер: `STF001`.
-2. **Секретарев Мария Сергеевна** — табельный `STF002`, Москва.  
-3. **Администраторов Андрей Николаевич** — табельный `STF003`, Москва.
-
-Чтобы выйти на конкретного пользователя, в боте выбери указанные университет, факультет, кафедру/группу и введи его ФИО вместе с соответствующим номером (студенческий или табельный). Это гарантированно найдёт запись в базе и позволит протестировать весь сценарий регистрации.
-
-## 3. Запуск контейнеров
-
-### Вариант со скриптом
-
-```bash
+```
 chmod +x scripts/test-backend-bot.sh
 ./scripts/test-backend-bot.sh
 ```
 
-Скрипт делает следующее:
-- запускает `backend` и `bot` (``docker compose up -d backend bot``);
-- ждёт, пока `/health` и `/healthz` начнут отвечать;
-- внутри `backend` выполняет `./init_db.sh`, чтобы накатывать схему и сиды (можно пропустить: `SKIP_SEED=1 ./scripts/test-backend-bot.sh`);
-- выводит ответы health-check и текущее состояние контейнеров.
+> Need to rebuild images after changing build-time envs (like `VITE_API_BASE_URL`)? Run `WITH_REBUILD=1 ./scripts/test-backend-bot.sh` or execute the shortcut `./scripts/test-backend-bot-rebuild.sh`.
 
-Параметры можно переопределять переменными окружения:
-- `COMPOSE_CMD="docker compose -p edumax-dev" ./scripts/test-backend-bot.sh`;
-- `BACKEND_HEALTH_URL="http://localhost:18000/health" ...`.
+What the script does:
 
-### Ручной запуск
+- Starts `backend`, `bot`, and `frontend` services (`docker compose up -d backend bot frontend`).
+- Waits until backend `/health`, bot `/healthz`, and the frontend root page respond.
+- Runs `bash ./init_db.sh` inside the backend container to apply schema and seed data (skip with `SKIP_SEED=1 ./scripts/test-backend-bot.sh`).
+- Prints health responses and container status.
+
+Useful overrides:
+
+- `COMPOSE_CMD="docker compose -p edumax-dev" ./scripts/test-backend-bot.sh`
+- `SERVICES="backend bot" ./scripts/test-backend-bot.sh` (if frontend is not needed temporarily)
+- `BACKEND_HEALTH_URL="http://localhost:18000/health" ./scripts/test-backend-bot.sh`
+- `FRONTEND_HEALTH_URL="http://localhost:5000" ./scripts/test-backend-bot.sh`
+
+## 4. Manual Docker Commands
 
 ```bash
-docker compose up --build backend bot
+docker compose up --build backend bot frontend
 
-# После старта контейнеров
+# After the containers are up
 docker compose exec backend bash -lc "bash ./init_db.sh"
 ```
 
-`init_db.sh` создаёт схему и заполняет тестовыми данными (университеты, студенты, расписание, события, заявки, платежи и т. д.).
+`init_db.sh` creates the schema and loads demo data (universities, students, schedules, events, requests, payments, broadcasts, etc.).
 
-## 4. Базовые проверки backend
+## 5. Backend Checks
 
-Все запросы идут на `http://localhost:8000/api/v1/...`. Авторизация — Bearer-токен.
+All endpoints live under `http://localhost:8000/api/v1/...`. Use `Authorization: Bearer <token>` for protected calls.
 
 1. Health:
    ```bash
    curl -s http://localhost:8000/health
    ```
-2. Swagger UI:
-   открыть `http://localhost:8000/docs` и убедиться, что endpoints прогружаются.
-3. Получить токен (пример с `max_id=1001`, возьмите любой из сидов):
+2. Swagger:
+   visit `http://localhost:8000/docs` and inspect available endpoints.
+3. Obtain token (example for `max_id=1001` seeded in DB):
    ```bash
    TOKEN=$(curl -s "http://localhost:8000/api/v1/auth/login-by-max-id?max_id=1001" | jq -r .access_token)
    ```
-4. Расписание:
+4. Schedule:
    ```bash
    curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/schedule/today
    ```
-5. Заявки:
+5. Requests:
    ```bash
    curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/requests/my
    ```
-6. Платежи:
+6. Payments:
    ```bash
    curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/payments/balance
    curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/payments
    ```
-7. Рассылки (роль STAFF/ADMIN):
+7. Broadcasts (STAFF/ADMIN):
    ```bash
    curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8000/api/v1/broadcasts/my
    ```
 
-Убеждаемся, что ответы корректны и в `docker compose logs backend` нет ошибок 5xx.
+Watch `docker compose logs backend` for errors (should be clean: no 5xx responses during these calls).
 
-## 5. Базовые проверки чат-бота
+## 6. Bot Checks
 
 1. HTTP API:
    ```bash
    curl -s http://localhost:8080/healthz
    ```
-2. Max Messenger:
-   - написать боту `/start`;
-   - проверить, что появляется главное меню и работают ветки расписания, заявок и платежей.
-3. В логах `bot` (``docker compose logs -f bot``) видно входящие сообщения и ответы.
+2. Messenger interaction:
+   - Chat with the bot in Max Messenger and send `/start`.
+   - Verify that the main menu is shown and actions (schedule, requests, payments) respond.
+3. Logs:
+   ```bash
+   docker compose logs -f bot
+   ```
+   You should see entries about incoming messages/callbacks.
 
-## 6. Интеграция backend → bot
+## 7. Backend → Bot Integration
 
-1. `BOT_NOTIFY_TOKEN` (backend) == `HTTP_BACKEND_TOKEN` (bot).
-2. Войти в backend как админ/сотрудник (через авторизацию и получение Bearer-токена).
-3. Создать рассылку:
+1. Ensure `BOT_NOTIFY_TOKEN` equals `HTTP_BACKEND_TOKEN`.
+2. Sign in to backend as an admin/staff user (use `max_id` from seed data).
+3. Create a broadcast:
    ```bash
    curl -s -H "Authorization: Bearer $TOKEN" \
         -H "Content-Type: application/json" \
-        -d '{"title":"Тест","message":"Hello","group_id":null,"faculty_id":null}' \
+        -d '{"title":"Smoke test","message":"Hello from backend","group_id":null,"faculty_id":null}' \
         http://localhost:8000/api/v1/broadcasts
    ```
-   В логах `bot` появится POST `/notify/bulk`, а студенты с заполненным `max_id` получат сообщение.
-4. Отправить напоминание об оплате:
+   Bot logs should contain POST `/notify/bulk`, and students with `max_id` receive the message in Max Messenger.
+4. Tuition reminder:
    ```bash
    curl -s -H "Authorization: Bearer $ADMIN_TOKEN" \
         -X POST http://localhost:8000/api/v1/payments/tuition/remind/1001
    ```
-   Бот вызовет `/notify/payment/tuition/1001` и отправит уведомление пользователю.
+   Bot triggers `/notify/payment/tuition/1001` and sends the reminder.
 
-Если backend вернул 502 — бот не принял запрос (обычно из-за неверного токена).
+If backend responds with HTTP 502, the bot request probably failed (token mismatch or bot unavailable).
 
-## 7. Полезные команды
+## 8. Frontend (Optional)
+
+The frontend container serves the built SPA on `http://localhost:4173`. Although not the focus, you can open the page to ensure assets load. Authentication flows rely on the backend API exposed at `http://localhost:8000`.
+
+## 9. Useful Commands
 
 ```bash
-# Логи
+# Logs
 docker compose logs -f backend
 docker compose logs -f bot
+docker compose logs -f frontend
 
-# Состояние контейнеров
-docker compose ps backend bot
+# Container status
+docker compose ps backend bot frontend
 
-# Повторная инициализация БД
-docker compose exec backend bash -lc "./init_db.sh"
+# Re-run DB seed
+docker compose exec backend bash -lc "bash ./init_db.sh"
 
-# Остановка
+# Stop everything
 docker compose down
 ```
 
-Этот чек-лист покрывает ручное тестирование backend и чат-бота целиком в Docker без поднятия mini app.
+Follow this checklist to exercise backend APIs, bot flows, and verify that all Docker services (including the frontend) remain healthy.***
