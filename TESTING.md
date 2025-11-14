@@ -169,3 +169,7 @@ docker compose down
 ```
 
 Follow this checklist to exercise backend APIs, bot flows, and verify that all Docker services (including the frontend) remain healthy.***
+
+## 10. Backend Helper Scripts
+
+Some backend endpoints (broadcasts, manual payments, student creation) do not have a UI. Use the Python helpers under `scripts/backend-tools/` to trigger them quickly — see `scripts/backend-tools/README.md` for detailed instructions and remember that the canonical reference for all payloads is still the Swagger UI (`http://localhost:8000/docs`).
