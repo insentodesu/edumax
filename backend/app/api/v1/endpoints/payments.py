@@ -19,8 +19,9 @@ from app.services.payment_service import (
     get_payment_history,
     get_user_balance_info,
 )
-from app.api.deps import get_current_active_user
+from app.api.deps import get_current_active_user, get_current_admin
 from app.core.config import settings
+from app.services import bot_notify_service
 
 router = APIRouter()
 
@@ -180,3 +181,21 @@ def payment_success(
         "payment_status": payment.status.value,
     }
 
+
+@router.post("/tuition/remind/{max_id}", summary="Отправить напоминание об оплате", status_code=status.HTTP_200_OK)
+def remind_tuition_payment(
+    max_id: int,
+    current_admin: User = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """Администратор вручную напоминает студенту об оплате и инициирует пуш в чат‑боте"""
+    user = db.query(User).filter(User.max_id == max_id).first()
+    if not user:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Пользователь с max_id={max_id} не найден")
+
+    try:
+        bot_notify_service.notify_tuition_reminder(max_id)
+    except bot_notify_service.BotNotifyError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+
+    return {"status": "sent", "user_id": str(user.id), "max_id": max_id}
